@@ -76,19 +76,22 @@ struct ParserCategory: Sendable {
 }
 
 enum AIParserClient {
-    static let productionURL = URL(string: "https://financial-parser.onrender.com")!
+    /// After the Render service is live, put its HTTPS URL here.
+    static let productionURL: URL? = nil
 
     static var candidateBases: [URL] {
+        var urls: [URL] = []
+        if let productionURL { urls.append(productionURL) }
         #if targetEnvironment(simulator)
-        [productionURL, URL(string: "http://127.0.0.1:3001")!]
+        urls.append(URL(string: "http://127.0.0.1:3001")!)
         #else
-        [
-            productionURL,
+        urls.append(contentsOf: [
             URL(string: "http://192.168.0.6:3001")!,
             URL(string: "http://169.254.172.74:3001")!,
             URL(string: "http://MacBook-Pro-leo.local:3001")!
-        ]
+        ])
         #endif
+        return urls
     }
 
     static func parse(
