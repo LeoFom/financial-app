@@ -77,7 +77,7 @@ struct ParserCategory: Sendable {
 
 enum AIParserClient {
     /// After the Render service is live, put its HTTPS URL here.
-    static let productionURL: URL? = nil
+    static let productionURL = URL(string: "https://financial-parser-8hfj.onrender.com")
 
     static var candidateBases: [URL] {
         var urls: [URL] = []
