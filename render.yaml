@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: financial-parser
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npx tsx src/index.ts
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: GEMINI_USE_VERTEX
+        value: "0"
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_PROJECT
+        sync: false

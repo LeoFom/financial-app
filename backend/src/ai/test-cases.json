@@ -1,0 +1,22 @@
+[
+  {
+    "input": "Кофе 80",
+    "expected": { "items": 1, "type": "expense", "amount": 80, "category": "food" }
+  },
+  {
+    "input": "Вчера продукты 750 грн",
+    "expected": { "items": 1, "type": "expense", "amount": 750, "category": "groceries" }
+  },
+  {
+    "input": "Получил зарплату 30000",
+    "expected": { "items": 1, "type": "income", "amount": 30000, "category": "salary" }
+  },
+  {
+    "input": "метро 20, кофе 60",
+    "expected": { "items": 2 }
+  },
+  {
+    "input": "Вчера в АТБ купил продукты на 750 грн, а потом заправил машину на 1200",
+    "expected": { "items": 2, "type": "expense" }
+  }
+]
