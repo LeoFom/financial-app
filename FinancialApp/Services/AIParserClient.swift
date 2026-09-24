@@ -137,6 +137,7 @@ enum AIParserClient {
         request.httpMethod = "POST"
         request.timeoutInterval = base.host?.contains("onrender.com") == true ? 60 : 12
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("FinancialApp/ios", forHTTPHeaderField: "User-Agent")
         request.httpBody = body
 
         let data: Data

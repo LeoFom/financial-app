@@ -1,8 +1,21 @@
+import { log, redact } from "../log.ts";
 import { SYSTEM_PROMPT, userPrompt } from "./prompt.ts";
 import { geminiResponseSchema, parsedTransactionSchema } from "./schema.ts";
 import type { ParseContext, ParsedTransaction } from "./types.ts";
 import { ProviderError } from "./types.ts";
 import { validateParsed } from "./validate.ts";
+
+async function timed<T>(label: string, work: () => Promise<T>): Promise<T> {
+  const started = Date.now();
+  try {
+    const result = await work();
+    log.ok(`${label}  ${Date.now() - started} мс`);
+    return result;
+  } catch (error) {
+    log.error(`${label}  ${Date.now() - started} мс  ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+}
 
 function retryableStatus(status: number): boolean {
   return status === 429 || status === 500 || status === 503 || status === 529;
@@ -42,6 +55,10 @@ function parseModelJSON(text: string): unknown {
 }
 
 export async function parseWithGemini(context: ParseContext): Promise<ParsedTransaction> {
+  return timed("Gemini", () => parseWithGeminiOnce(context));
+}
+
+async function parseWithGeminiOnce(context: ParseContext): Promise<ParsedTransaction> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new ProviderError("GEMINI_API_KEY is missing");
 
@@ -51,6 +68,7 @@ export async function parseWithGemini(context: ParseContext): Promise<ParsedTran
 
   for (const target of targets) {
     for (let attempt = 0; attempt < 2; attempt++) {
+      log.info(`Gemini:    модель ${model}, попытка ${attempt + 1}`);
       const response = await fetch(target.url, {
         method: "POST",
         headers: target.headers,
@@ -66,15 +84,13 @@ export async function parseWithGemini(context: ParseContext): Promise<ParsedTran
       });
 
       const body = await response.text();
-      const host = new URL(target.url).host;
       if (response.status === 503 && attempt === 0) {
-        console.warn(`Gemini 503 ${model} ${host}, retrying once`);
+        log.warn(`Gemini перегружен (503), повторяю через 400 мс`);
         await new Promise((resolve) => setTimeout(resolve, 400));
         continue;
       }
       if (!response.ok) {
-        console.warn(`Gemini ${response.status} ${model} ${host}: ${body.slice(0, 220)}`);
-        lastError = new ProviderError(`Gemini ${response.status}: ${body.slice(0, 400)}`, response.status, retryableStatus(response.status) || response.status === 403);
+        lastError = new ProviderError(`Gemini ${response.status}: ${redact(body, 220)}`, response.status, retryableStatus(response.status) || response.status === 403);
         break;
       }
 
@@ -91,9 +107,14 @@ export async function parseWithGemini(context: ParseContext): Promise<ParsedTran
 }
 
 export async function parseWithOpenAI(context: ParseContext): Promise<ParsedTransaction> {
+  return timed("OpenAI", () => parseWithOpenAIOnce(context));
+}
+
+async function parseWithOpenAIOnce(context: ParseContext): Promise<ParsedTransaction> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new ProviderError("OPENAI_API_KEY is missing");
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  log.info(`OpenAI:    модель ${model}`);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -121,7 +142,7 @@ export async function parseWithOpenAI(context: ParseContext): Promise<ParsedTran
 
   const body = await response.text();
   if (!response.ok) {
-    throw new ProviderError(`OpenAI ${response.status}: ${body.slice(0, 400)}`, response.status, retryableStatus(response.status));
+    throw new ProviderError(`OpenAI ${response.status}: ${redact(body, 220)}`, response.status, retryableStatus(response.status));
   }
 
   const json = JSON.parse(body) as {
@@ -136,6 +157,7 @@ export async function parseWithFallback(context: ParseContext): Promise<ParsedTr
   try {
     return await parseWithGemini(context);
   } catch (first) {
+    log.warn(`Gemini не сработал, переключаюсь на OpenAI`);
     if (!isQuotaOrRetry(first)) throw first;
     try {
       return await parseWithOpenAI(context);
