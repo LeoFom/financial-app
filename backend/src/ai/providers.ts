@@ -18,7 +18,45 @@ async function timed<T>(label: string, work: () => Promise<T>): Promise<T> {
 }
 
 function retryableStatus(status: number): boolean {
-  return status === 429 || status === 500 || status === 503 || status === 529;
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 529;
+}
+
+function openRouterKey(): string | undefined {
+  return process.env.OR_API_KEY || process.env.OPENROUTER_API_KEY;
+}
+
+type ChatMessage = {
+  content?: string | Array<{ type?: string; text?: string }>;
+};
+
+function extractChatText(body: string): string {
+  const json = JSON.parse(body) as {
+    choices?: { message?: ChatMessage }[];
+  };
+  const content = json.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part) => part.text ?? "").join("").trim();
+  }
+  return "";
+}
+
+function parseModelJSON(text: string): unknown {
+  const stripped = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    const start = stripped.indexOf("{");
+    const end = stripped.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(stripped.slice(start, end + 1));
+    }
+    throw new ProviderError("Model returned invalid JSON", 502, true);
+  }
 }
 
 type GeminiTarget = { url: string; headers: Record<string, string> };
@@ -49,9 +87,86 @@ function extractModelText(body: string): string {
   return parts.map((part) => part.text ?? "").join("").trim();
 }
 
-function parseModelJSON(text: string): unknown {
-  const trimmed = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  return JSON.parse(trimmed);
+export async function parseWithOpenRouter(context: ParseContext): Promise<ParsedTransaction> {
+  return timed("OpenRouter", () => parseWithOpenRouterOnce(context));
+}
+
+async function parseWithOpenRouterOnce(context: ParseContext): Promise<ParsedTransaction> {
+  const key = openRouterKey();
+  if (!key) throw new ProviderError("OR_API_KEY is missing");
+  const model = process.env.OPENROUTER_MODEL ?? "qwen/qwen3.8-27b:free";
+  log.info(`OpenRouter: модель ${model}`);
+
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: userPrompt(context) }
+  ];
+  let useStructured = true;
+  let lastError: ProviderError | undefined;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        "HTTP-Referer": "https://github.com/LeoFom/financial-app",
+        "X-Title": "FinancialApp"
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: Number(process.env.OPENROUTER_MAX_TOKENS ?? 2048),
+        messages,
+        ...(useStructured
+          ? { response_format: { type: "json_object" }, reasoning: { enabled: false } }
+          : {})
+      }),
+      signal: AbortSignal.timeout(25_000)
+    });
+
+    const body = await response.text();
+    if (response.status === 400 && useStructured) {
+      useStructured = false;
+      log.warn("OpenRouter 400, повторяю без json_object/reasoning");
+      continue;
+    }
+    if (response.status === 429 && attempt < 2) {
+      const wait = 800 * (attempt + 1);
+      log.warn(`OpenRouter 429, повтор через ${wait} мс`);
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      continue;
+    }
+    if (!response.ok) {
+      throw openRouterError(response.status, body);
+    }
+
+    const text = extractChatText(body);
+    if (!text) {
+      lastError = new ProviderError("OpenRouter returned an empty response", response.status, true);
+      continue;
+    }
+    try {
+      return validateParsed(parseModelJSON(text), context.categories, "openrouter");
+    } catch (error) {
+      lastError = new ProviderError(`OpenRouter JSON invalid: ${errorMessage(error)}`, 502, true);
+      log.warn(`OpenRouter JSON: ${redact(text, 280)}`);
+      if (attempt < 2) continue;
+      throw lastError;
+    }
+  }
+
+  throw lastError ?? new ProviderError("OpenRouter request failed", 502, true);
+}
+
+function openRouterError(status: number, body: string): ProviderError {
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    const message = parsed.error?.message ?? body;
+    return new ProviderError(`OpenRouter ${status}: ${redact(message, 220)}`, status, retryableStatus(status));
+  } catch {
+    return new ProviderError(`OpenRouter ${status}: ${redact(body, 220)}`, status, retryableStatus(status));
+  }
 }
 
 export async function parseWithGemini(context: ParseContext): Promise<ParsedTransaction> {
@@ -154,23 +269,29 @@ async function parseWithOpenAIOnce(context: ParseContext): Promise<ParsedTransac
 }
 
 export async function parseWithFallback(context: ParseContext): Promise<ParsedTransaction> {
-  try {
-    return await parseWithGemini(context);
-  } catch (first) {
-    log.warn(`Gemini не сработал, переключаюсь на OpenAI`);
-    if (!isQuotaOrRetry(first)) throw first;
+  const chain = [
+    { name: "OpenRouter", available: Boolean(openRouterKey()), run: () => parseWithOpenRouter(context) },
+    { name: "Gemini", available: Boolean(process.env.GEMINI_API_KEY), run: () => parseWithGemini(context) },
+    { name: "OpenAI", available: Boolean(process.env.OPENAI_API_KEY), run: () => parseWithOpenAI(context) }
+  ].filter((item) => item.available);
+
+  if (chain.length === 0) {
+    throw new ProviderError("No AI provider keys configured", 500, false);
+  }
+
+  const errors: string[] = [];
+  for (let index = 0; index < chain.length; index++) {
+    const current = chain[index];
     try {
-      return await parseWithOpenAI(context);
-    } catch (second) {
-      const message = [errorMessage(first), errorMessage(second)].join(" | ");
-      throw new ProviderError(message, 502, false);
+      return await current.run();
+    } catch (error) {
+      errors.push(`${current.name}: ${errorMessage(error)}`);
+      const next = chain[index + 1];
+      if (!next) break;
+      log.warn(`${current.name} не сработал, переключаюсь на ${next.name}`);
     }
   }
-}
-
-function isQuotaOrRetry(error: unknown): boolean {
-  if (error instanceof ProviderError) return error.retryable || (error.status ?? 0) >= 400;
-  return true;
+  throw new ProviderError(errors.join(" | "), 502, false);
 }
 
 function errorMessage(error: unknown): string {

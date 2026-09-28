@@ -17,9 +17,13 @@ services:
         value: "0"
       - key: OPENAI_MODEL
         value: gpt-4.1-nano
+      - key: OPENROUTER_MODEL
+        value: qwen/qwen3.8-27b:free
       - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY
+        sync: false
+      - key: OR_API_KEY
         sync: false
       - key: GEMINI_PROJECT
         sync: false

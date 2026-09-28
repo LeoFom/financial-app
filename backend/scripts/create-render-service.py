@@ -19,6 +19,8 @@ ENV_KEYS = (
     "GEMINI_USE_VERTEX",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
+    "OR_API_KEY",
+    "OPENROUTER_MODEL",
 )
 
 

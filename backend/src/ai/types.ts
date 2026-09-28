@@ -37,7 +37,7 @@ export type ParsedTransaction = {
   items: ParsedItem[];
   needsConfirmation: boolean;
   clarificationQuestion: string | null;
-  provider: "gemini" | "openai";
+  provider: "openrouter" | "gemini" | "openai";
 };
 
 export class ProviderError extends Error {

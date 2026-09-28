@@ -26,7 +26,7 @@ Rules:
 11. Never invent a merchant.
 12. If information is ambiguous, return null instead of guessing.
 13. If there is no amount, return items: [] and needsConfirmation true with a short clarificationQuestion.
-14. Return only the required structured output.`;
+14. Return only a JSON object. No markdown, no commentary.`;
 
 export function userPrompt(context: ParseContext): string {
   const categories = context.categories.join("\n");
@@ -41,6 +41,9 @@ export function userPrompt(context: ParseContext): string {
     "You MUST select one of the provided categories. Never create a new category.",
     "",
     "User input:",
-    JSON.stringify(context.text)
+    JSON.stringify(context.text),
+    "",
+    "JSON shape:",
+    '{"type":"expense"|"income"|"transfer","items":[{"amount":number,"currency":string|null,"category":string|null,"description":string|null,"merchant":string|null,"date":"YYYY-MM-DD"|null,"paymentMethod":"cash"|"card"|"bank_transfer"|null}],"needsConfirmation":boolean,"clarificationQuestion":string|null}'
   ].join("\n");
 }

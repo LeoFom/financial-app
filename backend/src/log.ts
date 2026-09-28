@@ -8,6 +8,7 @@ function line(message: string) {
 
 export function redact(text: string, max = 240): string {
   const cleaned = text
+    .replace(/sk-or-v1-[A-Za-z0-9]+/g, "sk-or-v1-***")
     .replace(/sk-[A-Za-z0-9_-]{10,}/g, "sk-***")
     .replace(/AQ\.[A-Za-z0-9_-]{10,}/g, "AQ.***")
     .replace(/AIza[A-Za-z0-9_-]{10,}/g, "AIza***")

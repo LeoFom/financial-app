@@ -22,10 +22,10 @@ const itemSchema = z.object({
 });
 
 const rawSchema = z.object({
-  type: z.enum(["expense", "income", "transfer"]),
-  items: z.array(itemSchema),
-  needsConfirmation: z.boolean(),
-  clarificationQuestion: z.string().nullable()
+  type: z.enum(["expense", "income", "transfer"]).optional().default("expense"),
+  items: z.array(itemSchema).optional().default([]),
+  needsConfirmation: z.boolean().optional().default(true),
+  clarificationQuestion: emptyToNull.optional()
 });
 
 const MAX_AMOUNT = 100_000;
@@ -63,7 +63,7 @@ export function validateParsed(
     type: parsed.type,
     items,
     needsConfirmation,
-    clarificationQuestion,
+    clarificationQuestion: clarificationQuestion ?? null,
     provider
   };
 }
