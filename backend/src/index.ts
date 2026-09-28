@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
-import { parseWithFallback, parseWithGemini, parseWithOpenAI, parseWithOpenRouter } from "./ai/providers.ts";
+import { parseWithFallback, parseWithGemini, parseWithOpenAI, parseWithOpenRouter, openRouterModels } from "./ai/providers.ts";
 import { ALLOWED_CATEGORIES, type ParseContext, type ParsedTransaction } from "./ai/types.ts";
 import { ProviderError } from "./ai/types.ts";
 import { log, redact } from "./log.ts";
@@ -54,7 +54,7 @@ const server = createServer(async (req, res) => {
       log.info(`текст:     «${redact(text, 180)}»`);
       log.info(`контекст:  дата ${context.currentDate}  ${context.timezone}  валюта ${context.defaultCurrency}`);
       log.info(`категории: ${context.categories.join(", ")}`);
-      log.info(`маршрут:   ${provider ? `только ${provider}` : "авто: OpenRouter Qwen, при сбое Gemini, затем OpenAI"}`);
+      log.info(`маршрут:   ${provider ? `только ${provider}` : "авто: Qwen → Nemotron → Gemma, затем Gemini, OpenAI"}`);
 
       const parsed = provider === "openai"
         ? await parseWithOpenAI(context)
@@ -85,7 +85,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   log.banner("сервер запущен");
   log.info(`порт:      ${PORT}`);
-  log.info(`OpenRouter: ${process.env.OR_API_KEY || process.env.OPENROUTER_API_KEY ? "ключ есть" : "ключа нет"}  модель ${process.env.OPENROUTER_MODEL ?? "qwen/qwen3.8-27b:free"}`);
+  log.info(`OpenRouter: ${process.env.OR_API_KEY || process.env.OPENROUTER_API_KEY ? "ключ есть" : "ключа нет"}  ${openRouterModels().join(" → ")}`);
   log.info(`Gemini:    ${process.env.GEMINI_API_KEY ? "ключ есть" : "ключа нет"}  модель ${process.env.GEMINI_MODEL ?? "gemini-3.6-flash"}`);
   log.info(`OpenAI:    ${process.env.OPENAI_API_KEY ? "ключ есть" : "ключа нет"}  модель ${process.env.OPENAI_MODEL ?? "gpt-4o-mini"}`);
   log.info("логи:      /health не пишем, чтобы не засорять консоль проверками Render");

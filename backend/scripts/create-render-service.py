@@ -21,6 +21,7 @@ ENV_KEYS = (
     "OPENAI_MODEL",
     "OR_API_KEY",
     "OPENROUTER_MODEL",
+    "OPENROUTER_MODELS",
 )
 
 

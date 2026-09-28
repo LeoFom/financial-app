@@ -25,6 +25,30 @@ function openRouterKey(): string | undefined {
   return process.env.OR_API_KEY || process.env.OPENROUTER_API_KEY;
 }
 
+const DEFAULT_OPENROUTER_MODELS = [
+  "qwen/qwen3.8-27b:free",
+  "nvidia/nemotron-3.5-lightning:free",
+  "google/gemma-4-26b-a4b-it:free"
+];
+
+export function openRouterModels(): string[] {
+  const listed = (process.env.OPENROUTER_MODELS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (listed.length > 0) return unique(listed);
+
+  const primary = process.env.OPENROUTER_MODEL?.trim();
+  const models = primary
+    ? [primary, ...DEFAULT_OPENROUTER_MODELS.filter((model) => model !== primary)]
+    : DEFAULT_OPENROUTER_MODELS;
+  return unique(models);
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 type ChatMessage = {
   content?: string | Array<{ type?: string; text?: string }>;
 };
@@ -88,13 +112,29 @@ function extractModelText(body: string): string {
 }
 
 export async function parseWithOpenRouter(context: ParseContext): Promise<ParsedTransaction> {
-  return timed("OpenRouter", () => parseWithOpenRouterOnce(context));
-}
-
-async function parseWithOpenRouterOnce(context: ParseContext): Promise<ParsedTransaction> {
   const key = openRouterKey();
   if (!key) throw new ProviderError("OR_API_KEY is missing");
-  const model = process.env.OPENROUTER_MODEL ?? "qwen/qwen3.8-27b:free";
+
+  const models = openRouterModels();
+  const errors: string[] = [];
+  for (let index = 0; index < models.length; index++) {
+    const model = models[index];
+    try {
+      return await timed(`OpenRouter ${model}`, () => parseWithOpenRouterModel(context, key, model));
+    } catch (error) {
+      errors.push(`${model}: ${errorMessage(error)}`);
+      const next = models[index + 1];
+      if (next) log.warn(`${model} не ответила, переключаюсь на ${next}`);
+    }
+  }
+  throw new ProviderError(errors.join(" | "), 502, true);
+}
+
+async function parseWithOpenRouterModel(
+  context: ParseContext,
+  key: string,
+  model: string
+): Promise<ParsedTransaction> {
   log.info(`OpenRouter: модель ${model}`);
 
   const messages = [
@@ -104,7 +144,7 @@ async function parseWithOpenRouterOnce(context: ParseContext): Promise<ParsedTra
   let useStructured = true;
   let lastError: ProviderError | undefined;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -128,13 +168,7 @@ async function parseWithOpenRouterOnce(context: ParseContext): Promise<ParsedTra
     const body = await response.text();
     if (response.status === 400 && useStructured) {
       useStructured = false;
-      log.warn("OpenRouter 400, повторяю без json_object/reasoning");
-      continue;
-    }
-    if (response.status === 429 && attempt < 2) {
-      const wait = 800 * (attempt + 1);
-      log.warn(`OpenRouter 429, повтор через ${wait} мс`);
-      await new Promise((resolve) => setTimeout(resolve, wait));
+      log.warn(`${model}: 400, повторяю без json_object/reasoning`);
       continue;
     }
     if (!response.ok) {
@@ -151,8 +185,7 @@ async function parseWithOpenRouterOnce(context: ParseContext): Promise<ParsedTra
     } catch (error) {
       lastError = new ProviderError(`OpenRouter JSON invalid: ${errorMessage(error)}`, 502, true);
       log.warn(`OpenRouter JSON: ${redact(text, 280)}`);
-      if (attempt < 2) continue;
-      throw lastError;
+      continue;
     }
   }
 
